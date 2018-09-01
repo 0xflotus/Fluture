@@ -2,10 +2,13 @@ import {Future, never} from './future';
 import {show, partial1} from './internal/utils';
 import {isUnsigned} from './internal/predicates';
 import {throwInvalidArgument} from './internal/throw';
+import {captureContext} from './internal/debug';
+import {nil} from './internal/list';
 
 export function After(time, value){
   this._time = time;
   this._value = value;
+  this.context = captureContext(nil, 'a Future created with after', After);
 }
 
 After.prototype = Object.create(Future.prototype);
@@ -26,6 +29,7 @@ After.prototype.toString = function After$toString(){
 export function RejectAfter(time, value){
   this._time = time;
   this._value = value;
+  this.context = captureContext(nil, 'a Future created with rejectAfter', After);
 }
 
 RejectAfter.prototype = Object.create(Future.prototype);

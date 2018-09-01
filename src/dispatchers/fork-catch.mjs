@@ -2,7 +2,7 @@ import {isFuture} from '../future';
 import {partial1, partial2, partial3} from '../internal/utils';
 import {isFunction} from '../internal/predicates';
 import {throwInvalidArgument, throwInvalidFuture} from '../internal/throw';
-import {valueToError} from '../internal/error';
+import {crashReport} from '../internal/error';
 
 export function forkCatch(f, g, h, m){
   if(!isFunction(f)) throwInvalidArgument('Future.forkCatch', 0, 'be a function', f);
@@ -12,5 +12,5 @@ export function forkCatch(f, g, h, m){
   if(!isFunction(h)) throwInvalidArgument('Future.forkCatch', 2, 'be a function', h);
   if(arguments.length === 3) return partial3(forkCatch, f, g, h);
   if(!isFuture(m)) throwInvalidFuture('Future.forkCatch', 3, m);
-  return m._interpret(function forkCatch$recover(x){ f(valueToError(x)) }, g, h);
+  return m._interpret(function forkCatch$recover(x){ f(crashReport(x)) }, g, h);
 }

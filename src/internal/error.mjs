@@ -1,6 +1,7 @@
 import {show, indent} from './utils';
 import {ordinal, namespace, name, version} from './const';
 import type from 'sanctuary-type-identifiers';
+import {nil} from './list';
 
 export function error(message){
   return new Error(message);
@@ -54,23 +55,34 @@ export function invalidFuture(it, at, m, s){
   );
 }
 
-export function valueToError(x){
-  var name, message;
+export function crashReport(report){
+  var name, message, stack;
   try{
-    if(x && typeof x.name === 'string' && typeof x.message === 'string'){
-      name = x.name;
-      message = x.message;
+    if(report.crash instanceof Error){
+      name = report.crash.name;
+      message = report.crash.message;
+      stack = report.crash.stack;
     }else{
       name = 'Non-Error';
-      message = show(x);
+      message = show(report.crash);
     }
   }catch (_){
     name = 'Something';
     message = '<The value which was thrown could not be converted to string>';
   }
-  var e = error(
-    name + ' occurred while running a computation for a Future:\n\n' +
-    message.split('\n').map(indent).join('\n')
-  );
+  var prefix = name + ' occurred while interpreting a Future:\n\n';
+  var e = error(prefix + message.split('\n').map(indent).join('\n'));
+  e.reason = report.crash;
+  e.future = report.future;
+  e.stack = (stack ? (prefix + stack) : e.stack) + '\n' + contextToStackTrace(report.context);
   return e;
+}
+
+export function contextToStackTrace(context){
+  var stack = '', tail = context;
+  while(tail !== nil){
+    stack += tail.head.stack + '\n';
+    tail = tail.tail;
+  }
+  return stack;
 }

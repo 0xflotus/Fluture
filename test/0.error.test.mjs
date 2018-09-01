@@ -1,12 +1,15 @@
-import {eq} from './util';
+import {eq, assertStackTrace, error as mockError} from './util';
+import {mock} from './futures';
 import {namespace, name, version} from '../src/internal/const';
+import {nil, cons} from '../src/internal/list';
 import {
   error,
   typeError,
   invalidArgument,
   invalidContext,
   invalidFuture,
-  valueToError
+  crashReport,
+  contextToStackTrace
 } from '../src/internal/error';
 
 describe('error', function (){
@@ -126,39 +129,45 @@ describe('error', function (){
 
   });
 
-  describe('valueToError', function (){
+  describe('crashReport', function (){
 
-    it('Converts any value to an Error object', function (){
+    it('can deal with any value in the crash property', function (){
+      function mock (v){ return {crash: v, future: null, context: nil} }
 
-      eq(valueToError(new Error('test')), new Error(
-        'Error occurred while running a computation for a Future:\n\n' +
-        '  test'
-      ));
-
-      eq(valueToError(new TypeError('test')), new Error(
-        'TypeError occurred while running a computation for a Future:\n\n' +
-        '  test'
-      ));
-
-      eq(valueToError('test'), new Error(
-        'Non-Error occurred while running a computation for a Future:\n\n' +
-        '  "test"'
-      ));
-
-      eq(valueToError({foo: 'bar'}), new Error(
-        'Non-Error occurred while running a computation for a Future:\n\n' +
-        '  {"foo": "bar"}'
-      ));
-
-      const evilValue = {};
+      var evilValue = {};
       evilValue.__defineGetter__('name', () => { throw new Error });
       evilValue.__defineGetter__('stack', () => { throw new Error });
 
-      eq(valueToError(evilValue), new Error(
-        'Something occurred while running a computation for a Future:\n\n' +
-        '  <The value which was thrown could not be converted to string>'
-      ));
+      eq(crashReport(mock(new Error('test'))) instanceof Error, true);
+      eq(crashReport(mock(new TypeError('test'))) instanceof Error, true);
+      eq(crashReport(mock('test')) instanceof Error, true);
+      eq(crashReport(mock({foo: 'bar'})) instanceof Error, true);
+      eq(crashReport(mock(evilValue)) instanceof Error, true);
+      eq(crashReport(mock(null)) instanceof Error, true);
+      eq(crashReport(mock({crash: null})) instanceof Error, true);
+    });
 
+    it('formats a crash report', function (){
+      var context = cons({stack: 'hello'}, cons({stack: 'world'}, nil));
+      var report = crashReport({
+        future: mock,
+        crash: mockError,
+        context: context,
+      });
+      eq(report instanceof Error, true);
+      eq(report.name, 'Error');
+      eq(report.message, 'Error occurred while interpreting a Future:\n\n  Intentional error for unit testing');
+      eq(report.reason, mockError);
+      eq(report.future, mock);
+      assertStackTrace('Error occurred while interpreting a Future:\n\nError: Intentional error for unit testing', report.stack);
+    });
+
+  });
+
+  describe('contextToStackTrace', function (){
+
+    it('converts a nested context structure to a stack trace', function (){
+      eq(contextToStackTrace(cons({stack: 'hello'}, cons({stack: 'world'}, nil))), 'hello\nworld\n');
     });
 
   });

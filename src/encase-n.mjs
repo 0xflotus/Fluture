@@ -2,10 +2,13 @@ import {Future} from './future';
 import {show, showf, partial1, noop} from './internal/utils';
 import {isFunction} from './internal/predicates';
 import {throwInvalidArgument} from './internal/throw';
+import {nil} from './internal/list';
+import {captureContext} from './internal/debug';
 
 export function EncaseN(fn, a){
   this._fn = fn;
   this._a = a;
+  this.context = captureContext(nil, 'a Future created with encaseN', EncaseN);
 }
 
 EncaseN.prototype = Object.create(Future.prototype);
@@ -26,7 +29,7 @@ EncaseN.prototype._interpret = function EncaseN$interpret(rec, rej, res){
       }
     });
   }catch(e){
-    rec(e);
+    rec({crash: e, future: this, context: this.context});
     open = false;
     return noop;
   }

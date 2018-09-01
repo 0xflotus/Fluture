@@ -4,13 +4,14 @@ import Denque from 'denque';
 import {show, showf, noop, moop, raise} from './internal/utils';
 import {isFunction} from './internal/predicates';
 import {FL, $$type} from './internal/const';
-import {nil, cons} from './internal/list';
+import {nil, cons, cat} from './internal/list';
 import type from 'sanctuary-type-identifiers';
-import {error, typeError, invalidFuture, valueToError} from './internal/error';
+import {error, typeError, invalidFuture, crashReport} from './internal/error';
 import {throwInvalidArgument, throwInvalidContext, throwInvalidFuture} from './internal/throw';
+import {captureContext} from './internal/debug';
 
 function Future$onCrash(x){
-  raise(valueToError(x));
+  raise(crashReport(x));
 }
 
 export function Future(computation){
@@ -62,7 +63,7 @@ Future.prototype.forkCatch = function Future$forkCatch(rec, rej, res){
   if(!isFunction(rec)) throwInvalidArgument('Future#fork', 0, 'to be a Function', rec);
   if(!isFunction(rej)) throwInvalidArgument('Future#fork', 1, 'to be a Function', rej);
   if(!isFunction(res)) throwInvalidArgument('Future#fork', 2, 'to be a Function', res);
-  return this._interpret(function Future$forkCatch$recover(x){ rec(valueToError(x)) }, rej, res);
+  return this._interpret(function Future$forkCatch$recover(x){ rec(crashReport(x)) }, rej, res);
 };
 
 Future.prototype.value = function Future$value(res){
@@ -105,7 +106,10 @@ Future.prototype._transform = function Future$transform(action){
   return new Transformation(this, cons(action, nil));
 };
 
+Future.prototype.context = nil;
+
 export function Computation(computation){
+  this.context = captureContext(nil, 'constructing a Future', Future);
   this._computation = computation;
 }
 
@@ -113,6 +117,7 @@ Computation.prototype = Object.create(Future.prototype);
 
 Computation.prototype._interpret = function Computation$interpret(rec, rej, res){
   var open = false, cancel = noop, cont = function(){ open = true };
+  var context = captureContext(this.context, 'interpreting a computation', Computation$interpret);
   try{
     cancel = this._computation(function Computation$rej(x){
       cont = function Computation$rej$cont(){
@@ -133,14 +138,18 @@ Computation.prototype._interpret = function Computation$interpret(rec, rej, res)
     }) || noop;
   }catch(e){
     open = false;
-    rec(e);
+    rec({future: this, context: context, crash: e});
     return noop;
   }
   if(!(isFunction(cancel) && cancel.length === 0)){
-    rec(typeError(
-      'The computation was expected to return a nullary function or void\n' +
-      '  Actual: ' + show(cancel)
-    ));
+    rec({
+      future: this,
+      context: context,
+      crash: typeError(
+        'The computation was expected to return a nullary function or void\n' +
+        '  Actual: ' + show(cancel)
+      )
+    });
   }
   cont();
   return function Computation$cancel(){
@@ -171,6 +180,9 @@ Transformation.prototype._interpret = function Transformation$interpret(rec, rej
   //This is the primary queue of actions. All actions in here will be "cold",
   //meaning they haven't had the chance yet to run concurrent computations.
   var queue = new Denque();
+
+  //A linked list of stack traces, tracking context across ticks.
+  var context = captureContext(nil, 'interpreting a transformed Future', Transformation$interpret);
 
   //These combined variables define our current state.
   // future  = the future we are currently forking
@@ -210,7 +222,11 @@ Transformation.prototype._interpret = function Transformation$interpret(rec, rej
       }
       future = future._spawn;
     }
-    if(async) drain();
+    if(async){
+      if(action) context = cat(action.context, context);
+      context = cat(future.context, context);
+      drain();
+    }
   }
 
   //This function serves as a rejection handler for our current future.
@@ -241,6 +257,7 @@ Transformation.prototype._interpret = function Transformation$interpret(rec, rej
       action.cancel();
       while((it = popStack()) && it !== terminator) it.cancel();
     }
+    action = terminator;
     settle(m);
   }
 
@@ -256,8 +273,9 @@ Transformation.prototype._interpret = function Transformation$interpret(rec, rej
     Sequence$cancel();
     settled = true;
     queue.clear();
+    var report = {future: e.future || future, context: cat(e.context, context), crash: e.crash};
     future = never;
-    rec(e);
+    rec(report);
   }
 
   //This function serves to kickstart concurrent computations.
@@ -312,19 +330,19 @@ Transformation.prototype.toString = function Transformation$toString(){
   return this._spawn.toString() + str;
 };
 
-export function Crashed(error){
-  this._error = error;
+export function Crashed(report){
+  this._report = report;
 }
 
 Crashed.prototype = Object.create(Future.prototype);
 
 Crashed.prototype._interpret = function Crashed$interpret(rec){
-  rec(this._error);
+  rec(this._report);
   return noop;
 };
 
 Crashed.prototype.toString = function Crashed$toString(){
-  return 'Future(function crash(){ throw ' + show(this._error) + ' })';
+  return 'Future(function crash(){ throw ' + show(this._report.crash) + ' })';
 };
 
 export function Rejected(value){
@@ -441,13 +459,17 @@ export var Action = {
   cancel: noop
 };
 
+function captureActionContext(name, fn){
+  return captureContext(nil, 'transforming with Future.' + name, fn);
+}
+
 function nullaryActionToString(){
   return this.name + '()';
 }
 
 function defineNullaryAction(name, prototype){
   var _name = '_' + name;
-  function NullaryAction(){}
+  function NullaryAction(context){ this.context = context }
   NullaryAction.prototype = Object.assign(Object.create(Action), prototype);
   NullaryAction.prototype.name = name;
   NullaryAction.prototype.toString = nullaryActionToString;
@@ -456,7 +478,9 @@ function defineNullaryAction(name, prototype){
     return this[_name]();
   };
   Future.prototype[_name] = function uncheckedNullaryTransformation(){
-    return this._transform(new NullaryAction);
+    return this._transform(new NullaryAction(
+      captureActionContext(name, uncheckedNullaryTransformation)
+    ));
   };
   return NullaryAction;
 }
@@ -467,7 +491,7 @@ function mapperActionToString(){
 
 function defineMapperAction(name, prototype){
   var _name = '_' + name;
-  function MapperAction(mapper){ this.mapper = mapper }
+  function MapperAction(mapper, context){ this.mapper = mapper; this.context = context }
   MapperAction.prototype = Object.assign(Object.create(Action), prototype);
   MapperAction.prototype.name = name;
   MapperAction.prototype.toString = mapperActionToString;
@@ -477,7 +501,10 @@ function defineMapperAction(name, prototype){
     return this[_name](mapper);
   };
   Future.prototype[_name] = function uncheckedMapperTransformation(mapper){
-    return this._transform(new MapperAction(mapper));
+    return this._transform(new MapperAction(
+      mapper,
+      captureActionContext(name, uncheckedMapperTransformation)
+    ));
   };
   return MapperAction;
 }
@@ -488,7 +515,11 @@ function bimapperActionToString(){
 
 function defineBimapperAction(name, prototype){
   var _name = '_' + name;
-  function BimapperAction(lmapper, rmapper){ this.lmapper = lmapper; this.rmapper = rmapper }
+  function BimapperAction(lmapper, rmapper, context){
+    this.lmapper = lmapper;
+    this.rmapper = rmapper;
+    this.context = context;
+  }
   BimapperAction.prototype = Object.assign(Object.create(Action), prototype);
   BimapperAction.prototype.name = name;
   BimapperAction.prototype.toString = bimapperActionToString;
@@ -498,8 +529,12 @@ function defineBimapperAction(name, prototype){
     if(!isFunction(rm)) throwInvalidArgument('Future#' + name, 1, 'to be a Function', rm);
     return this[_name](lm, rm);
   };
-  Future.prototype[_name] = function uncheckedBimapperTransformation(lm, rm){
-    return this._transform(new BimapperAction(lm, rm));
+  Future.prototype[_name] = function uncheckedBimapperTransformation(lmapper, rmapper){
+    return this._transform(new BimapperAction(
+      lmapper,
+      rmapper,
+      captureActionContext(name, uncheckedBimapperTransformation)
+    ));
   };
   return BimapperAction;
 }
@@ -510,7 +545,7 @@ function otherActionToString(){
 
 function defineOtherAction(name, prototype){
   var _name = '_' + name;
-  function OtherAction(other){ this.other = other }
+  function OtherAction(other, context){ this.other = other; this.context = context }
   OtherAction.prototype = Object.assign(Object.create(Action), prototype);
   OtherAction.prototype.name = name;
   OtherAction.prototype.toString = otherActionToString;
@@ -520,7 +555,10 @@ function defineOtherAction(name, prototype){
     return this[_name](other);
   };
   Future.prototype[_name] = function uncheckedOtherTransformation(other){
-    return this._transform(new OtherAction(other));
+    return this._transform(new OtherAction(
+      other,
+      captureActionContext(name, uncheckedOtherTransformation)
+    ));
   };
   return OtherAction;
 }
@@ -531,6 +569,11 @@ function defineParallelAction(name, rec, rej, res, prototype){
     var eager = new Eager(this.other);
     var action = new ParallelAction(eager);
     function ParallelAction$early(m){ early(m, action) }
+    action.context = captureContext(
+      this.context,
+      name + ' triggering a parallel Future',
+      ParallelAction$run
+    );
     action.cancel = eager._interpret(
       function ParallelAction$rec(x){ rec(ParallelAction$early, x) },
       function ParallelAction$rej(x){ rej(ParallelAction$early, x) },
@@ -544,35 +587,41 @@ function defineParallelAction(name, rec, rej, res, prototype){
 function apActionHandler(f){
   return isFunction(f) ?
          this.other._map(function ApAction$resolved$mapper(x){ return f(x) }) :
-         new Crashed(typeError(
-           'Future#' + this.name + ' expects its first argument to be a Future of a Function\n' +
-           '  Actual: Future.of(' + show(f) + ')'
-         ));
+         new Crashed({
+           context: this.context,
+           crash: typeError(
+             'Future#' + this.name + ' expects its first argument to be a Future of a Function\n' +
+             '  Actual: Future.of(' + show(f) + ')'
+           )
+         });
 }
 
 function chainActionHandler(x){
   var m;
-  try{ m = this.mapper(x) }catch(e){ return new Crashed(e) }
-  return isFuture(m) ? m : new Crashed(invalidFuture(
-    'Future#' + this.name,
-    'the function it\'s given to return a Future',
-    m,
-    '\n  From calling: ' + showf(this.mapper) + '\n  With: ' + show(x)
-  ));
+  try{ m = this.mapper(x) }catch(e){ return new Crashed({crash: e, context: this.context}) }
+  return isFuture(m) ? m : new Crashed({
+    context: this.context,
+    crash: invalidFuture(
+      'Future#' + this.name,
+      'the function it\'s given to return a Future',
+      m,
+      '\n  From calling: ' + showf(this.mapper) + '\n  With: ' + show(x)
+    )
+  });
 }
 
 function returnOther(){
   return this.other;
 }
 
-function mapWith(mapper, create, value){
+function mapWith(mapper, create, value, context){
   var m;
-  try{ m = create(mapper(value)) }catch(e){ m = new Crashed(e) }
+  try{ m = create(mapper(value)) }catch(e){ m = new Crashed({crash: e, context: context}) }
   return m;
 }
 
 function mapRight(value){
-  return mapWith(this.rmapper, resolve, value);
+  return mapWith(this.rmapper, resolve, value, this.context);
 }
 
 function earlyCrash(early, x){
@@ -592,12 +641,16 @@ defineOtherAction('ap', {
 });
 
 defineMapperAction('map', {
-  resolved: function MapAction$resolved(x){ return mapWith(this.mapper, resolve, x) }
+  resolved: function MapAction$resolved(x){
+    return mapWith(this.mapper, resolve, x, this.context);
+  }
 });
 
 defineBimapperAction('bimap', {
   resolved: mapRight,
-  rejected: function BimapAction$rejected(x){ return mapWith(this.lmapper, reject, x) }
+  rejected: function BimapAction$rejected(x){
+    return mapWith(this.lmapper, reject, x, this.context);
+  }
 });
 
 defineMapperAction('chain', {
@@ -605,7 +658,9 @@ defineMapperAction('chain', {
 });
 
 defineMapperAction('mapRej', {
-  rejected: function MapRejAction$rejected(x){ return mapWith(this.mapper, reject, x) }
+  rejected: function MapRejAction$rejected(x){
+    return mapWith(this.mapper, reject, x, this.context);
+  }
 });
 
 defineMapperAction('chainRej', {
@@ -619,7 +674,9 @@ defineNullaryAction('swap', {
 
 defineBimapperAction('fold', {
   resolved: mapRight,
-  rejected: function FoldAction$rejected(x){ return mapWith(this.lmapper, resolve, x) }
+  rejected: function FoldAction$rejected(x){
+    return mapWith(this.lmapper, resolve, x, this.context);
+  }
 });
 
 var finallyAction = {

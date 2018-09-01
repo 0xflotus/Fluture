@@ -2,6 +2,7 @@ import chai from 'chai';
 import * as U from './util';
 import * as F from './futures';
 import type from 'sanctuary-type-identifiers';
+import {nil} from '../src/internal/list';
 import {
   Future,
   isFuture,
@@ -145,13 +146,13 @@ describe('Future', function (){
     it('ensures the recovery value has a consistent type', function (done){
       var mock = Object.create(F.mock);
       mock._interpret = function (rec){
-        rec(42);
+        rec({crash: 42, context: nil});
       };
       forkCatch(function (x){
         expect(x).to.be.an.instanceof(Error);
         expect(x.name).to.equal('Error');
         expect(x.message).to.equal(
-          'Non-Error occurred while running a computation for a Future:\n\n' +
+          'Non-Error occurred while interpreting a Future:\n\n' +
           '  42'
         );
         done();
@@ -337,10 +338,10 @@ describe('Future', function (){
 
     it('throws when called on a crashed Future', function (){
       var mock = Object.create(F.mock);
-      mock._interpret = function (rec){ rec(U.error) };
+      mock._interpret = function (rec){ rec({crash: U.error, context: nil}) };
       var f = function (){ return mock.fork(U.noop, U.noop) };
       expect(f).to.throw(Error, (
-        'Error occurred while running a computation for a Future:\n\n' +
+        'Error occurred while interpreting a Future:\n\n' +
         '  Intentional error for unit testing'
       ));
     });
@@ -413,13 +414,13 @@ describe('Future', function (){
     it('ensures the recovery value has a consistent type', function (done){
       var mock = Object.create(F.mock);
       mock._interpret = function (rec){
-        rec(42);
+        rec({crash: 42, context: nil});
       };
       mock.forkCatch(function (x){
         expect(x).to.be.an.instanceof(Error);
         expect(x.name).to.equal('Error');
         expect(x.message).to.equal(
-          'Non-Error occurred while running a computation for a Future:\n\n' +
+          'Non-Error occurred while interpreting a Future:\n\n' +
           '  42'
         );
         done();

@@ -1,5 +1,7 @@
+import './test/0.debug.test.mjs';
 import './test/0.error.test.mjs';
 import './test/0.iteration.test.mjs';
+import './test/0.list.test.mjs';
 import './test/0.predicates.test.mjs';
 import './test/0.utils.test.mjs';
 import './test/1.future.test.mjs';

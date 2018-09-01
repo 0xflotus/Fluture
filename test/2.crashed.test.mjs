@@ -13,7 +13,7 @@ describe('Crashed', function (){
   });
 
   it('is represented by show', function (){
-    expect(show(new Crashed(42))).to.equal('Future(function crash(){ throw 42 })');
+    expect(show(new Crashed({crash: 42}))).to.equal('Future(function crash(){ throw 42 })');
   });
 
 });

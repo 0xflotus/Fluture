@@ -50,3 +50,4 @@ export {hook} from './src/hook';
 export {node} from './src/node';
 export {parallel} from './src/parallel';
 export {tryP} from './src/try-p';
+export {debugMode} from './src/internal/debug';

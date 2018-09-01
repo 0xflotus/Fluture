@@ -31,7 +31,7 @@ Some of the features provided by Fluture include:
 * [Resource management utilities](#resource-management).
 * [Stack safe composition and recursion](#stack-safety).
 * [Integration](#sanctuary) with [Sanctuary][S].
-* A pleasant debugging experience through informative error messages.
+* [A pleasant debugging experience](#debugging).
 
 For more information:
 
@@ -135,6 +135,7 @@ for sponsoring the project.
 - [How to read the type signatures](#type-signatures)
 - [How cancellation works](#cancellation)
 - [On stack safety](#stack-safety)
+- [Debugging with Fluture](#debugging)
 - [Usage with Sanctuary](#sanctuary)
 - [Using multiple versions of Fluture](#casting-futures)
 
@@ -212,13 +213,20 @@ for sponsoring the project.
 
 </details>
 
-<details><summary>Resource management and utilities</summary>
+<details><summary>Resource management</summary>
 
 - [`hook`: Safely create and dispose resources](#hook)
+- [`finally`: Run a Future after the previous settles](#finally)
+
+</details>
+
+<details><summary>Other utilities</summary>
+
 - [`pipe`: Apply a function to a Future in a fluent method chain](#pipe)
 - [`cache`: Cache a Future so that it can be forked multiple times](#cache)
 - [`isFuture`: Determine whether a value is a Fluture compatible Future](#isfuture)
 - [`never`: A Future that never settles](#never)
+- [`debugMode`: Configure Fluture's debug mode](#debugmode)
 
 </details>
 
@@ -382,6 +390,39 @@ m.fork(console.error, console.log);
 
 To learn more about memory and stack usage under different types of recursion,
 see (or execute) [`scripts/test-mem`](scripts/test-mem).
+
+### Debugging
+
+First and foremost, Fluture type-checks all of its input and throws TypeErrors
+when incorrect input is provided. The messages they carry are designed to
+provide enough insight to figure out what went wrong.
+
+Secondly, Fluture catches exceptions that are thrown asynchronously, and
+exposes them to you in one of two ways:
+
+1. By throwing an Error when it happens.
+2. By calling your [exception handler](#forkcatch) with an Error.
+
+The original exception isn't used because it might have been any value.
+Instead, a regular JavaScript Error instance whose properties are based on the
+original exception is created. Its properties are as follows:
+
+- `name`: Always just `"Error"`.
+- `message`: Information about the original exception.
+- `reason`: The original exception.
+- `stack`: The stack trace of the original exception if it had one, or the
+  Error's own stack trace otherwise. If debug mode (see below) is enabled, it
+  contains additional stack traces from the steps leading up to the crash.
+- `future`: The instance of [`Future`](#future) that was being
+  [consumed](#consuming-futures) when the exception happened. Often printing it
+  as a String can yield useful information. Only available in debug mode.
+
+Finally, as mentioned, Fluture has a [debug mode](#debugmode) wherein
+additional contextual information across multiple JavaScript ticks is
+collected, and included as an extended "async stack trace" on Errors.
+
+Debug mode can have a significant impact on performance, and uses up memory,
+so I would advise against using it in production.
 
 ### Sanctuary
 
@@ -1235,7 +1276,7 @@ computation was, the more certain we will be that recovery is safe.
 ```js
 var fut = Future.after(300, null).map(x => x.foo);
 fut.forkCatch(console.error, console.error, console.log);
-//! Error: TypeError occurred while running a computation for a Future:
+//! Error: TypeError occurred while interpreting a Future:
 //!   Cannot read property 'foo' of null
 ```
 
@@ -1763,6 +1804,25 @@ Returns an array whose only element is the resolution value of the Future.
 In many cases it will be impossible to extract this value; In those cases, the
 array will be empty. This function is meant to be used for type introspection:
 it is **not** the correct way to [consume a Future](#consuming-futures).
+
+#### debugMode
+
+<details><summary><code>debugMode :: Boolean -> Undefined</code></summary>
+
+```hs
+debugMode :: Boolean -> Undefined
+```
+
+</details>
+
+Enable or disable Fluture's debug mode. Debug mode is disabled by default.
+Pass `true` to enable, or `false` to disable.
+
+```js
+Future.debugMode(true);
+```
+
+For more information, see [debugging](#debugging).
 
 ## License
 

@@ -2,8 +2,8 @@ import chai from 'chai';
 var expect = chai.expect;
 import {Future, isFuture} from '../index.mjs';
 import show from 'sanctuary-show';
-import Z from 'sanctuary-type-classes';
-import {AssertionError, strictEqual} from 'assert';
+import {AssertionError, strictEqual, deepStrictEqual} from 'assert';
+import {isDeepStrictEqual} from 'util';
 
 export var STACKSIZE = (function r (){try{return 1 + r()}catch(e){return 1}}());
 export var noop = function (){};
@@ -18,7 +18,7 @@ export var throwit = function (it){ throw it };
 export var eq = function eq (actual, expected){
   strictEqual(arguments.length, eq.length);
   strictEqual(show(actual), show(expected));
-  strictEqual(Z.equals(actual, expected), true);
+  deepStrictEqual(actual, expected);
 };
 
 export var repeat = function (n, x){
@@ -47,7 +47,7 @@ export var assertEqual = function (a, b){
   if(astate === 0){ throw new Error('First Future passed to assertEqual did not resolve instantly') }
   if(bstate === 0){ throw new Error('Second Future passed to assertEqual did not resolve instantly') }
   if(isFuture(aval) && isFuture(bval)) return assertEqual(aval, bval);
-  if(astate === bstate && Z.equals(aval, bval)){ return true }
+  if(astate === bstate && isDeepStrictEqual(aval, bval)){ return true }
   throw new Error(
     '\n    ' + (a.toString()) +
     ' :: Future({ <' + states[astate] + '> ' + show(aval) + ' })' +
@@ -84,10 +84,10 @@ export var assertCrashed = function (m, x){
   assertIsFuture(m);
   interpertAndGuard(
     m, function (e){
-      Z.equals(x, e) ? res() : rej(new AssertionError({
+      isDeepStrictEqual(x, e.crash) ? res() : rej(new AssertionError({
         expected: x,
-        actual: e,
-        message: 'Expected the Future to crash with ' + show(x) + '; got: ' + show(e)
+        actual: e.crash,
+        message: 'Expected the Future to crash with ' + show(x) + '; got: ' + show(e.crash)
       }));
     }, function (e){
       rej(new Error('Expected the Future to crash. Instead rejected with: ' + show(e)));
@@ -104,7 +104,7 @@ export var assertRejected = function (m, x){
     m, function (e){
       rej(new Error('Expected the Future to reject. Instead crashed with: ' + show(e)));
     }, function (e){
-      Z.equals(x, e) ? res() : rej(new AssertionError({
+      isDeepStrictEqual(x, e) ? res() : rej(new AssertionError({
         expected: x,
         actual: e,
         message: 'Expected the Future to reject with ' + show(x) + '; got: ' + show(e)
@@ -124,7 +124,7 @@ export var assertResolved = function (m, x){
     }, function (e){
       rej(new Error('Expected the Future to resolve. Instead rejected with: ' + show(e)));
     }, function (y){
-      Z.equals(x, y) ? res() : rej(new AssertionError({
+      isDeepStrictEqual(x, y) ? res() : rej(new AssertionError({
         expected: x,
         actual: y,
         message: 'Expected the Future to resolve with ' + show(x) + '; got: ' + show(y)
@@ -141,3 +141,10 @@ export var onceOrError = function (f){
     f.apply(null, arguments);
   };
 };
+
+export function assertStackTrace (name, x){
+  eq(typeof x, 'string');
+  eq(x.slice(0, name.length), name);
+  var lines = x.slice(name.length).split('\n');
+  eq(lines.length > 0, true);
+}
